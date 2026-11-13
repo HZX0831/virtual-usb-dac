@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Virtual Hi-Fi USB DAC — 实时协议与音频输出验证台</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --panel: #131b2e;
+      --border: #23314f;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 20px;
+      line-height: 1.5;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 16px 22px;
+      border-radius: 12px;
+      margin-bottom: 18px;
+    }
+    .title-group h1 { font-size: 1.25rem; font-weight: 700; color: #fff; }
+    .title-group p { font-size: 0.85rem; color: var(--muted); }
+    .badges { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .badge {
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      background: #1e293b;
+    }
+    .badge.ok { background: rgba(34, 197, 94, 0.15); color: #4ade80; border-color: rgba(34, 197, 94, 0.4); }
+    .badge.warn { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.4); }
+    .badge.err { background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.4); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+    }
+    .col-4 { grid-column: span 4; }
+    .col-8 { grid-column: span 8; }
+    .col-6 { grid-column: span 6; }
+    .col-12 { grid-column: span 12; }
+    @media (max-width: 1024px) {
+      .col-4, .col-8, .col-6 { grid-column: span 12; }
+    }
+    .card h2 {
+      font-size: 0.95rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .kv-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .kv-item {
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(51, 65, 85, 0.6);
+      padding: 10px 12px;
+      border-radius: 8px;
+    }
+    .kv-label { font-size: 0.75rem; color: var(--muted); }
+    .kv-val { font-size: 1.05rem; font-weight: 700; color: #fff; margin-top: 2px; font-family: Consolas, monospace; }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    button {
+      background: #1e293b;
+      color: #fff;
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+    button:hover { background: #334155; border-color: var(--accent); }
+    button.primary { background: #0284c7; border-color: #38bdf8; }
+    button.primary:hover { background: #0369a1; }
+    button.danger { background: #991b1b; border-color: #ef4444; }
+    button.danger:hover { background: #7f1d1d; }
+    .meter-wrap { margin-bottom: 12px; }
+    .meter-label { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px; font-family: Consolas, monospace; }
+    .meter-bar { height: 14px; background: #0f172a; border-radius: 7px; overflow: hidden; border: 1px solid #1e293b; }
+    .meter-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #22c55e 0%, #eab308 75%, #ef4444 100%); transition: width 0.08s ease; }
+    canvas { width: 100%; height: 150px; background: #090d16; border-radius: 8px; border: 1px solid #1e293b; display: block; }
+    .log-box {
+      height: 240px;
+      overflow-y: auto;
+      background: #090d16;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 10px;
+      font-family: Consolas, monospace;
+      font-size: 0.82rem;
+    }
+    .log-entry { padding: 3px 0; border-bottom: 1px solid rgba(30, 41, 59, 0.5); }
+    .log-time { color: #64748b; margin-right: 8px; }
+    .log-type { color: #38bdf8; font-weight: 600; margin-right: 8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-group">
+      <h1>Virtual Hi-Fi USB DAC 监控与输出验证台</h1>
+      <p>USB/IP UAC 2.0 / UAC 1.0 硬件协议级模拟 · WASAPI 独占与共享音频流实时校验</p>
+    </div>
+    <div class="badges">
+      <span id="badge-usb" class="badge warn">USB: 未挂载</span>
+      <span id="badge-stream" class="badge">音频流: 空闲</span>
+      <span id="badge-format" class="badge">48000 Hz / 16-bit</span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- Left Column: USB Hardware Negotiated State -->
+    <div class="card col-4">
+      <h2>USB 硬件协商状态</h2>
+      <div class="kv-list">
+        <div class="kv-item">
+          <div class="kv-label">USB VID : PID</div>
+          <div class="kv-val" id="hw-vidpid">0x1209 : 0xF001</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">UAC 协议版本</div>
+          <div class="kv-val" id="hw-uac">UAC 2.0 (High-Speed)</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">当前 Alternate Setting</div>
+          <div class="kv-val" id="hw-alt">Alt 0 (Idle)</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">硬件时钟采样率</div>
+          <div class="kv-val" id="hw-rate">48000 Hz</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">量化位深 / 声道</div>
+          <div class="kv-val" id="hw-bits">16-bit / 2ch</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">硬件音量 / 静音</div>
+          <div class="kv-val" id="hw-vol">0.0 dB (Unmuted)</div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="primary" onclick="apiPost('/api/device/plug')">插入 USB 声卡 (Attach)</button>
+        <button class="danger" onclick="apiPost('/api/device/unplug')">拔出 USB 声卡 (Detach)</button>
+        <button onclick="apiPost('/api/device/inject-error', {count: 20})">注入 20 个 USB 传输错误</button>
+      </div>
+    </div>
+
+    <!-- Right Column: Real-Time Audio Verification -->
+    <div class="card col-8">
+      <h2>
+        <span>实时音频流特征分析 (PCM 载荷检验)</span>
+        <span id="rec-status" style="font-size:0.8rem;color:#94a3b8;">未在录制</span>
+      </h2>
+      <div class="kv-list" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 14px;">
+        <div class="kv-item">
+          <div class="kv-label">主频率 (FFT 检测)</div>
+          <div class="kv-val" id="au-freq">0.0 Hz</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">综合 RMS 电平</div>
+          <div class="kv-val" id="au-rms">-120.0 dBFS</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">综合 Peak 峰值</div>
+          <div class="kv-val" id="au-peak">-120.0 dBFS</div>
+        </div>
+        <div class="kv-item">
+          <div class="kv-label">累计接收 PCM 帧 / 码率</div>
+          <div class="kv-val" id="au-frames">0 (0 kbps)</div>
+        </div>
+      </div>
+
+      <div class="meter-wrap">
+        <div class="meter-label"><span>Left Channel (L)</span><span id="lbl-l">-120.0 dBFS</span></div>
+        <div class="meter-bar"><div class="meter-fill" id="bar-l"></div></div>
+      </div>
+      <div class="meter-wrap">
+        <div class="meter-label"><span>Right Channel (R)</span><span id="lbl-r">-120.0 dBFS</span></div>
+        <div class="meter-bar"><div class="meter-fill" id="bar-r"></div></div>
+      </div>
+
+      <div class="btn-row">
+        <button class="primary" onclick="startCapture()">开始录制原始 USB WAV</button>
+        <button onclick="stopCapture()">停止录制并校验 SHA-256</button>
+        <button onclick="apiPost('/api/stats/reset')">重置统计计数</button>
+      </div>
+    </div>
+
+    <!-- Waveform & Spectrum -->
+    <div class="card col-6">
+      <h2>实时时域波形 (Oscilloscope)</h2>
+      <canvas id="cv-wave" width="600" height="150"></canvas>
+    </div>
+    <div class="card col-6">
+      <h2>实时 FFT 频谱 (32-Band Spectrum)</h2>
+      <canvas id="cv-spec" width="600" height="150"></canvas>
+    </div>
+
+    <!-- USB Control Logs -->
+    <div class="card col-12">
+      <h2>USB 控制传输与硬件协商日志 (URB / Control Events)</h2>
+      <div class="log-box" id="log-box"></div>
+    </div>
+  </div>
+
+  <script>
+    const waveCanvas = document.getElementById('cv-wave');
+    const waveCtx = waveCanvas.getContext('2d');
+    const specCanvas = document.getElementById('cv-spec');
+    const specCtx = specCanvas.getContext('2d');
+
+    async function apiPost(url, body = {}) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+        return await res.json();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function startCapture() {
+      const r = await apiPost('/api/capture/start');
+      if (r && r.ok) {
+        document.getElementById('rec-status').textContent = '录制中: ' + r.recording_path;
+        document.getElementById('rec-status').style.color = '#4ade80';
+      }
+    }
+
+    async function stopCapture() {
+      const r = await apiPost('/api/capture/stop');
+      if (r && r.ok && r.recording) {
+        document.getElementById('rec-status').textContent =
+          `已保存 (${r.recording.frames_captured} frames, SHA256: ${r.recording.sha256.slice(0, 12)}...)`;
+        document.getElementById('rec-status').style.color = '#38bdf8';
+      }
+    }
+
+    function dbToPercent(db) {
+      const clamped = Math.max(-90, Math.min(0, db));
+      return ((clamped + 90) / 90) * 100;
+    }
+
+    function drawWaveform(samples) {
+      const w = waveCanvas.width, h = waveCanvas.height;
+      waveCtx.clearRect(0, 0, w, h);
+      waveCtx.strokeStyle = '#1e293b';
+      waveCtx.beginPath();
+      waveCtx.moveTo(0, h / 2);
+      waveCtx.lineTo(w, h / 2);
+      waveCtx.stroke();
+
+      if (!samples || !samples.length) return;
+      waveCtx.strokeStyle = '#38bdf8';
+      waveCtx.lineWidth = 2;
+      waveCtx.beginPath();
+      for (let i = 0; i < samples.length; i++) {
+        const x = (i / (samples.length - 1)) * w;
+        const y = (0.5 - samples[i] * 0.45) * h;
+        if (i === 0) waveCtx.moveTo(x, y);
+        else waveCtx.lineTo(x, y);
+      }
+      waveCtx.stroke();
+    }
+
+    function drawSpectrum(bands) {
+      const w = specCanvas.width, h = specCanvas.height;
+      specCtx.clearRect(0, 0, w, h);
+      if (!bands || !bands.length) return;
+      const barW = (w / bands.length) - 3;
+      for (let i = 0; i < bands.length; i++) {
+        const pct = Math.max(0.02, (Math.max(-100, Math.min(0, bands[i])) + 100) / 100);
+        const bh = pct * (h - 10);
+        specCtx.fillStyle = pct > 0.75 ? '#f59e0b' : '#22c55e';
+        specCtx.fillRect(i * (barW + 3) + 2, h - bh, barW, bh);
+      }
+    }
+
+    function updateUI(data) {
+      if (!data || !data.hardware || !data.audio) return;
+      const hw = data.hardware;
+      const au = data.audio;
+
+      const usbBadge = document.getElementById('badge-usb');
+      if (hw.attached) {
+        usbBadge.textContent = 'USB: 已挂载 (' + hw.bus_id + ')';
+        usbBadge.className = 'badge ok';
+      } else {
+        usbBadge.textContent = 'USB: 未挂载';
+        usbBadge.className = 'badge warn';
+      }
+
+      const streamBadge = document.getElementById('badge-stream');
+      if (au.is_playing && !au.is_silent) {
+        streamBadge.textContent = '音频流: 正在输出声音';
+        streamBadge.className = 'badge ok';
+      } else if (au.is_playing && au.is_silent) {
+        streamBadge.textContent = '音频流: 传输中 (静音帧)';
+        streamBadge.className = 'badge warn';
+      } else {
+        streamBadge.textContent = '音频流: 空闲';
+        streamBadge.className = 'badge';
+      }
+
+      document.getElementById('badge-format').textContent = `${hw.sample_rate} Hz / ${hw.bit_depth}-bit`;
+      document.getElementById('hw-vidpid').textContent = `${hw.vid} : ${hw.pid}`;
+      document.getElementById('hw-uac').textContent = `UAC ${hw.uac_version}.0`;
+      document.getElementById('hw-alt').textContent = hw.alt_setting > 0 ? `Alt ${hw.alt_setting} (Active)` : 'Alt 0 (Idle)';
+      document.getElementById('hw-rate').textContent = `${hw.sample_rate} Hz`;
+      document.getElementById('hw-bits').textContent = `${hw.bit_depth}-bit / ${hw.channels}ch`;
+      document.getElementById('hw-vol').textContent = `${hw.volume_db} dB (${hw.mute ? 'Muted' : 'Unmuted'})`;
+
+      document.getElementById('au-freq').textContent = `${au.dominant_freq_hz.toFixed(1)} Hz`;
+      document.getElementById('au-rms').textContent = `${au.rms_db.toFixed(1)} dBFS`;
+      document.getElementById('au-peak').textContent = `${au.peak_db.toFixed(1)} dBFS`;
+      document.getElementById('au-frames').textContent = `${au.total_frames} (${au.bitrate_kbps} kbps)`;
+
+      document.getElementById('lbl-l').textContent = `${au.rms_db_left.toFixed(1)} dBFS (Peak ${au.peak_db_left.toFixed(1)})`;
+      document.getElementById('lbl-r').textContent = `${au.rms_db_right.toFixed(1)} dBFS (Peak ${au.peak_db_right.toFixed(1)})`;
+      document.getElementById('bar-l').style.width = `${dbToPercent(au.rms_db_left)}%`;
+      document.getElementById('bar-r').style.width = `${dbToPercent(au.rms_db_right)}%`;
+
+      drawWaveform(au.waveform_preview);
+      drawSpectrum(au.spectrum_preview);
+
+      if (data.logs) {
+        const box = document.getElementById('log-box');
+        box.innerHTML = data.logs.slice().reverse().map(l =>
+          `<div class="log-entry"><span class="log-time">[${l.time_str}]</span><span class="log-type">${l.type}</span><span>${l.detail}</span></div>`
+        ).join('');
+      }
+    }
+
+    function connectWS() {
+      const ws = new WebSocket(`ws://${location.host}/ws/telemetry`);
+      ws.onmessage = (ev) => updateUI(JSON.parse(ev.data));
+      ws.onclose = () => setTimeout(connectWS, 1500);
+    }
+    connectWS();
+  </script>
+</body>
+</html>
